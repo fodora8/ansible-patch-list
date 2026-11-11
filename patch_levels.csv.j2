@@ -1,0 +1,6 @@
+{% from 'patch_row.j2' import patch_row %}
+hostname,os_release,running_kernel,package_updates
+{% for host in ansible_play_hosts_all | sort %}
+{% set fields = patch_row(host, hostvars[host].patch_check | default({})) | from_json %}
+"{{ fields | map('replace', '"', '""') | join('","') }}"
+{% endfor %}

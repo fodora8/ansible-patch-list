@@ -1,0 +1,10 @@
+{% macro patch_row(host, result) -%}
+  {% set row = result.stdout_lines | default([]) | select('match', '^PATCH_REPORT\t') | list | last | default('') -%}
+  {% set fields = row.split('\t')[1:] -%}
+  {% if result.unreachable | default(false) -%}
+    {% set fields = ['', '', 'unreachable'] -%}
+  {% elif result.failed | default(false) or fields | length != 3 -%}
+    {% set fields = ['', '', 'collection_failed'] -%}
+  {% endif -%}
+  {{ ([host] + fields) | to_json }}
+{%- endmacro %}

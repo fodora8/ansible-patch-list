@@ -1,0 +1,61 @@
+---
+- name: Report Linux patch levels
+  hosts: patch_hosts
+  gather_facts: false
+  strategy: linear
+
+  vars:
+    patch_report_path: "{{ playbook_dir }}/patch_levels.csv"
+    patch_html_path: "{{ playbook_dir }}/patch_levels.html"
+    patch_html_mode: "0600"
+
+  tasks:
+    - name: Read the OS release, running kernel, and repository update status
+      ansible.builtin.raw: |
+        if [ -r /etc/os-release ]; then
+          . /etc/os-release
+        fi
+        kernel=$(uname -r) || exit 1
+
+        if command -v dnf >/dev/null 2>&1; then
+          manager=dnf
+        elif command -v yum >/dev/null 2>&1; then
+          manager=yum
+        else
+          manager=
+        fi
+
+        updates=unsupported
+        if [ -n "$manager" ]; then
+          timeout -k 5s 120s "$manager" -q check-update </dev/null >/dev/null
+          case $? in
+            0) updates=none_reported ;;
+            100) updates=available ;;
+            124) updates=timeout ;;
+            *) updates=check_failed ;;
+          esac
+        fi
+
+        printf 'PATCH_REPORT\t%s\t%s\t%s\n' "${PRETTY_NAME:-unknown}" "$kernel" "$updates"
+      register: patch_check
+      changed_when: false
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Write one CSV on the Ansible control VM
+      ansible.builtin.template:
+        src: patch_levels.csv.j2
+        dest: "{{ patch_report_path }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Write one HTML report on the Ansible control VM
+      ansible.builtin.template:
+        src: patch_levels.html.j2
+        dest: "{{ patch_html_path }}"
+        mode: "{{ patch_html_mode }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
