@@ -1,0 +1,6 @@
+[
+{% for host in groups['report_targets'] %}
+{% set result = hostvars[host].snapshot | default({}) %}
+  {{ {'host': host, 'address': hostvars[host].ansible_host | default(host), 'allowed': hostvars[host].report_allowed_listeners | default([]), 'unreachable': result.unreachable | default(false), 'failed': result.failed | default(false), 'stdout': result.stdout | default(''), 'message': result.msg | default('')} | to_json }}{{ ',' if not loop.last else '' }}
+{% endfor %}
+]

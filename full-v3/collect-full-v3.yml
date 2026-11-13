@@ -1,0 +1,54 @@
+---
+- name: Collect host security status and vendor advisories
+  hosts: report_targets
+  gather_facts: false
+  tasks:
+    - name: Read the management SSH connection context
+      ansible.builtin.raw: 'printf "%s\n" "$SSH_CONNECTION"'
+      register: ssh_context
+      changed_when: false
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Collect security checks and vendor advisories
+      ansible.builtin.script:
+        cmd: >-
+          full-v3/collect.py
+          {{ {'proxy': report_dnf_proxy | default(''), 'repositories': report_dnf_repo_urls | default({})} | to_json | quote }}
+          {{ (ssh_context.stdout | default('') | trim) | quote }}
+          {{ (ansible_user | default('')) | quote }}
+          {{ (report_ssh_client_hostname | default('')) | quote }}
+        executable: "{{ report_python | default('/usr/bin/python3') }}"
+      become: true
+      throttle: 10
+      register: snapshot
+      changed_when: false
+      ignore_errors: true
+      ignore_unreachable: true
+
+- name: Render reports on the controller
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Write the collection results
+      ansible.builtin.template:
+        src: snapshots.json.j2
+        dest: "{{ report_state_dir }}/snapshots-full-v3.json"
+        mode: "0600"
+
+    - name: Create the Full v3 report directory
+      ansible.builtin.file:
+        path: "{{ report_web_dir }}/full-v3"
+        state: directory
+        mode: "0755"
+
+    - name: Generate the CSV and HTML
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/flock
+          - "{{ report_state_dir }}/full-v3-render.lock"
+          - /usr/bin/python3
+          - "{{ playbook_dir }}/full-v3/render.py"
+          - "{{ report_state_dir }}/snapshots-full-v3.json"
+          - "{{ report_web_dir }}/full-v3"
+      changed_when: true

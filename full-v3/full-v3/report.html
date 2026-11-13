@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet security report · Full v3</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0e131b; color: #e3eaf3; font: 12px/1.4 "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+  main { max-width: 1200px; margin: auto; padding: 20px 16px; }
+  h1 { font-size: clamp(20px, 3vw, 26px); line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 16px; margin: 0; }
+  p { margin: 0 0 10px; }
+  a, .host { color: #9bc8ff; }
+  .subtle { color: #acb9cc; }
+  .cards { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(94px, 1fr);
+    gap: 6px; overflow-x: auto; }
+  .cards .card { padding: 8px; font-size: inherit; }
+  dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 8px; }
+  .card, section { background: #171f2b; border: 1px solid #364357; border-radius: 8px; padding: 10px; }
+  .card strong { display: block; font-size: 20px; }
+  section { margin-top: 12px; }
+  .toolbar, .pagination, .dialog-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .toolbar { margin: 8px 0; align-items: end; }
+  .toolbar label { display: grid; gap: 4px; }
+  .toolbar label:first-child { flex: 1 1 240px; }
+  input, select, button { font: inherit; }
+  input, select, .pagination button, .close {
+    border: 1px solid #65758b; border-radius: 6px; padding: 5px 8px; background: #171f2b; color: inherit;
+  }
+  button, summary { cursor: pointer; }
+  button:disabled { opacity: .48; cursor: default; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { background: #222d3d; font-weight: 650; }
+  th, td { padding: 5px 8px; border-bottom: 1px solid #364357; }
+  tbody tr:hover { background: #1d2939; }
+  .host { border: 0; background: none; padding: 0; text-align: left; text-decoration: underline; }
+  .host-address { display: block; color: #acb9cc; font-size: inherit; }
+  .badge { font-size: inherit; padding: 2px 6px; border-radius: 20px; white-space: nowrap; }
+  .urgent { background: #47242d; color: #ffc0c9; }
+  .review { background: #49361b; color: #ffda97; }
+  .ok { background: #1d3b30; color: #a3edc2; }
+  .unknown, .unreachable { background: #2c3849; color: #d0dbea; }
+  .pagination { justify-content: space-between; margin-top: 8px; }
+  .pagination button { margin-left: 6px; }
+  .note { margin: 8px 0 0; font-size: 12px; }
+  dialog { width: min(850px, calc(100% - 24px)); max-height: 85vh; overflow: auto;
+    border: 1px solid #65758b; border-radius: 10px; padding: 14px; background: #171f2b; color: inherit; }
+  dialog::backdrop { background: #070a10cc; }
+  .dialog-header { justify-content: space-between; }
+  dt { font-size: 12px; color: #acb9cc; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  details { padding: 5px 0; border-top: 1px solid #364357; }
+  pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .error { color: #ffc0c9; overflow-wrap: anywhere; }
+</style>
+</head>
+<body data-snapshot="$snapshot_id">
+<main>
+  <h1>Fleet security report · Full v3</h1>
+  <p class="subtle">Generated $generated · <a href="security-report.csv">Download CSV</a></p>
+  <div class="cards">$cards</div>
+  <section aria-labelledby="hosts-heading">
+    <h2 id="hosts-heading">Hosts</h2>
+    <div class="toolbar">
+      <label>Search hosts<input id="search" type="search" placeholder="Hostname, IP address, OS or CVE ID"></label>
+      <label>Status<select id="status">
+        <option value="">All statuses</option><option>Urgent</option><option>Unreachable</option>
+        <option>Unknown</option><option>Review</option><option>OK</option>
+      </select></label>
+      <label>Platform<select id="platform"><option value="">All platforms</option></select></label>
+      <label>Rows per page<select id="size"><option>50</option><option>100</option></select></label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Host</th><th scope="col">Status</th><th scope="col">OS</th><th scope="col">Platform</th>
+          <th scope="col">Critical</th><th scope="col">Important</th>
+          <th scope="col">Unexpected listeners</th><th scope="col">Reboot required</th></tr></thead>
+        <tbody id="hosts"></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span id="range" aria-live="polite"></span>
+      <div><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button></div>
+    </div>
+    <p class="note subtle">Enter a full CVE ID to search pending vendor advisories for hosts with CVE data.</p>
+    <p class="note subtle">Listener counts describe local sockets. Network reachability depends on firewall and routing policy.</p>
+    <noscript><p>Enable JavaScript to browse hosts, or download the CSV.</p></noscript>
+  </section>
+</main>
+<dialog id="detail" aria-labelledby="detail-title">
+  <div class="dialog-header">
+    <h2 id="detail-title"></h2>
+    <form method="dialog"><button class="close" autofocus>Close</button></form>
+  </div>
+  <div id="detail-body" aria-live="polite"></div>
+</dialog>
+<script id="host-index" type="application/json">$table_json</script>
+<script>
+  const byId = (id) => document.getElementById(id);
+  const inventory = JSON.parse(byId("host-index").textContent);
+  const snapshotPath = "snapshots/" + document.body.dataset.snapshot + "/";
+  const cveRequests = new Map();
+  let pageRequest = 0;
+  const search = byId("search");
+  const statusFilter = byId("status");
+  const platformFilter = byId("platform");
+  const platforms = new Set(["Physical", "VMware", "KVM", "Unknown"]);
+  for (const [, , , , platform] of inventory) platforms.add(platform);
+  for (const platform of platforms) platformFilter.add(new Option(platform, platform));
+  const pageSize = byId("size");
+  const hosts = byId("hosts");
+  const previous = byId("previous");
+  const next = byId("next");
+  const detail = byId("detail");
+  const detailBody = byId("detail-body");
+  const number = new Intl.NumberFormat();
+  let page = 0;
+  let detailRequest;
+
+  async function openHost(host, key) {
+    const request = new AbortController();
+    detailRequest = request;
+    byId("detail-title").textContent = host;
+    detailBody.textContent = "Loading host details…";
+    detail.showModal();
+    try {
+      const response = await fetch(snapshotPath + "hosts/" + key + ".html", { signal: request.signal });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const fragment = await response.text();
+      if (!request.signal.aborted) detailBody.innerHTML = fragment;
+    } catch (error) {
+      if (!request.signal.aborted) detailBody.textContent = "Host details are unavailable. Refresh the report and try again.";
+    }
+  }
+
+  async function fetchCve(id) {
+    const response = await fetch(snapshotPath + "cves/" + id + ".json");
+    if (response.ok) return response.json();
+    if (response.status === 404) {
+      const snapshot = await fetch(snapshotPath + "cves/ready.json");
+      if (snapshot.ok) return [];
+    }
+    throw new Error("CVE lookup unavailable");
+  }
+
+  function showMessage(message) {
+    hosts.replaceChildren();
+    const cell = hosts.insertRow().insertCell();
+    cell.colSpan = 8;
+    cell.textContent = message;
+    byId("range").textContent = "";
+    previous.disabled = true;
+    next.disabled = true;
+  }
+
+  async function showPage() {
+    const request = ++pageRequest;
+    const query = search.value.trim().toLowerCase();
+    const filter = statusFilter.value;
+    const selectedPlatform = platformFilter.value;
+    const size = Number(pageSize.value);
+    const cveSearch = /^cve-\d{4}-\d{4,}$$/.test(query);
+    let candidates = inventory;
+    if (cveSearch) {
+      const id = query.toUpperCase();
+      if (!cveRequests.has(id)) cveRequests.set(id, fetchCve(id));
+      showMessage("Looking up " + id + "…");
+      try {
+        const matchingHosts = await cveRequests.get(id);
+        if (request !== pageRequest) return;
+        candidates = matchingHosts.map((index) => inventory[index]);
+      } catch (error) {
+        cveRequests.delete(id);
+        if (request === pageRequest) {
+          showMessage("CVE lookup is unavailable. Refresh the report and try again.");
+        }
+        return;
+      }
+    }
+    const matches = candidates.filter(([host, address, status, os, platform]) =>
+      (!filter || status === filter) &&
+      (!selectedPlatform || platform === selectedPlatform) &&
+      (!query || cveSearch || [host, address, os].some((value) => String(value).toLowerCase().includes(query))));
+    const start = page * size;
+    const end = Math.min(start + size, matches.length);
+    hosts.replaceChildren();
+    for (const [host, address, status, os, platform, critical, important, listeners, reboot, key] of matches.slice(start, end)) {
+      const row = hosts.insertRow();
+      const hostCell = row.insertCell();
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "host";
+      button.textContent = host;
+      button.addEventListener("click", () => openHost(host, key));
+      const addressLabel = document.createElement("span");
+      addressLabel.className = "host-address";
+      addressLabel.textContent = address;
+      hostCell.append(button, addressLabel);
+      const badge = document.createElement("span");
+      badge.className = "badge " + status.toLowerCase();
+      badge.textContent = status;
+      row.insertCell().append(badge);
+      for (const value of [os, platform, critical, important, listeners, reboot]) row.insertCell().textContent = value;
+    }
+    if (matches.length === 0) {
+      const cell = hosts.insertRow().insertCell();
+      cell.colSpan = 8;
+      cell.textContent = cveSearch
+        ? "No hosts with matching advisory data match the current filters."
+        : "No hosts match the current filters.";
+    }
+    byId("range").textContent = matches.length
+      ? number.format(start + 1) + "–" + number.format(end) + " of " + number.format(matches.length) + " hosts"
+      : "0 hosts";
+    previous.disabled = page === 0;
+    next.disabled = end >= matches.length;
+  }
+
+  function resetPage() {
+    page = 0;
+    showPage();
+  }
+
+  search.addEventListener("input", resetPage);
+  statusFilter.addEventListener("change", resetPage);
+  platformFilter.addEventListener("change", resetPage);
+  pageSize.addEventListener("change", resetPage);
+  previous.addEventListener("click", () => { page -= 1; showPage(); });
+  next.addEventListener("click", () => { page += 1; showPage(); });
+  detail.addEventListener("close", () => {
+    if (!detail.open) detailRequest?.abort();
+  });
+  showPage();
+</script>
+</body>
+</html>
