@@ -190,8 +190,18 @@ def html_report(results, table_rows, snapshot_id):
                                snapshot_id=snapshot_id)
 
 
+def display_row(row):
+    display = dict(row)
+    for field in ("collected", "booted"):
+        if row[field] != "unknown":
+            display[field] = datetime.fromisoformat(row[field]).strftime("%Y/%m/%d")
+    seconds = row["uptime_seconds"]
+    display["uptime_days"] = "{:.2f}".format(seconds / 86400) if isinstance(seconds, int) else "unknown"
+    return display
+
+
 def host_details(row, details):
-    fields = ("address", "os", "platform", "kernel", "collected", "booted", "uptime_seconds",
+    fields = ("address", "os", "platform", "kernel", "collected", "booted", "uptime_days",
               *SEVERITIES, "other_advisories", "reboot_required", "listeners",
               "unexpected_listeners", "running_services", "failed_units", "selinux", "ssh_policy")
     facts = "".join("<div><dt>{}</dt><dd>{}</dd></div>".format(
@@ -245,10 +255,12 @@ status_order = {status: index for index, status in
                 enumerate(("Urgent", "Unreachable", "Unknown", "Review", "OK"))}
 results.sort(key=lambda item: (status_order[item[0]["status"]], item[0]["host"]))
 output = io.StringIO(newline="")
-writer = csv.DictWriter(output, fieldnames=COLUMNS)
+csv_columns = tuple("uptime_days" if field == "uptime_seconds" else field for field in COLUMNS)
+writer = csv.DictWriter(output, fieldnames=csv_columns)
 writer.writeheader()
 for row, _ in results:
-    writer.writerow({key: csv_value(value) for key, value in row.items()})
+    display = display_row(row)
+    writer.writerow({key: csv_value(display[key]) for key in csv_columns})
 snapshots = destination / "snapshots"
 snapshots.mkdir(exist_ok=True)
 snapshot_id = uuid4().hex
@@ -261,7 +273,7 @@ with tempfile.TemporaryDirectory(prefix=".pending-", dir=snapshots) as temporary
     (staging / "hosts").mkdir()
     (staging / "cves").mkdir()
     for row, details in results:
-        fragment = host_details(row, details)
+        fragment = host_details(display_row(row), details)
         digest = hashlib.sha256(row["host"].encode("utf-8")).hexdigest()
         write_atomic(staging / "hosts" / (digest + ".html"), fragment)
         for cve in details.get(CVE_DETAILS, ()):
