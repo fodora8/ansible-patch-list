@@ -5,21 +5,28 @@ Full v3 runs from the Ansible controller and publishes a paginated HTML report, 
 ## Controller deployment
 
 1. Use a Linux controller with Ansible Core, OpenSSH client, Python 3.9 or later, and `flock` from util-linux. Use Lighttpd or Nginx to serve the generated files.
-2. Put `collect-full-v3.yml`, `snapshots.json.j2`, and an `inventory.yml` based on [the RHEL example](inventory-rhel.example.yml) in `/opt/security-report`. Put `collect.py`, `render.py`, and `report.html` in its `full-v3/` subdirectory.
-3. In inventory, set `report_state_dir` to a private directory writable by the reporting user and `report_web_dir` to the report server's document root. The example uses `/var/lib/security-report` and `/usr/share/nginx/html/security-report`. The playbook creates `full-v3/` under the web root. Keep the private state directory outside that root.
+2. Put `collect-full-v3.yml`, `snapshots.json.j2`, and a `hosts.txt` based on [the host list example](hosts.example.txt) in `/opt/security-report`. Put `collect.py`, `render.py`, and `report.html` in its `full-v3/` subdirectory.
+3. In the playbook’s controller play, set `report_state_dir` to a private directory writable by the reporting user and `report_web_dir` to the report server's document root. The example uses `/var/lib/security-report` and `/usr/share/nginx/html/security-report`. The playbook creates `full-v3/` under the web root. Keep the private state directory outside that root.
 4. Serve the report directory under `/full-v3/` using the existing report server's access rules. On Lighttpd, set `report_web_dir` to the virtual host's document root, ensure `index.html` is an index file, and include [the metrics configuration](lighttpd-metrics.conf) in that virtual host. Validate with `lighttpd -tt -f /etc/lighttpd/lighttpd.conf` before reloading. On Nginx, include `full-v3/nginx-locations.conf` in the existing report server block and validate with `nginx -t` before reloading.
-5. Add targets to `report_targets` and run the playbook as the reporting account.
+5. Put one hostname or IPv4 address per line in `hosts.txt` and run the playbook as the reporting account.
 
 ```bash
 cd /opt/security-report
-ansible-playbook -i inventory.yml collect-full-v3.yml
+ansible-playbook -i localhost, collect-full-v3.yml
 ```
 
 The controller writes `snapshots-full-v3.json` with mode `0600`. It renders host detail pages and a small JSON file per CVE, publishes the new HTML and CSV, and retains the two most recent generations of host and CVE files. The browser fetches a CVE file only when a full CVE ID is searched, and fetches a host detail page when a host is opened. The main HTML and its lookups use the same generation. In a 4,500-host simulation, the main HTML was **746 KB** and a CVE lookup matching 3,000 hosts was **14 KB**, both uncompressed.
 
+The controller reads `hosts.txt` once per run. The file contains only hostnames or
+IPv4 addresses. Blank lines are ignored and duplicates are collapsed. The
+`localhost,` argument supplies the controller inventory entry. To use a dump at
+another controller path, pass `-e report_hosts_file=/path/to/hosts.txt`. Have the
+dump producer write to a temporary file and rename it into place so the
+playbook reads a complete list. The daily timer reads the same file each time.
+
 ## Target deployment and collection
 
-Each target needs a reachable SSH service, a reporting login authorised with the controller's public key, non-interactive sudo for this playbook, and a working Python interpreter. Keep the private key on the controller and pin the target's SSH host key there. Set the inventory address, account, expected listener list, and any interpreter override. The example uses `/usr/bin/python3`. Set `report_python` when your RHEL installation provides Python 3 at a different path. Use `report_ssh_client_hostname` where the SSH policy depends on a hostname in a `Match Host` rule.
+Each target needs a reachable SSH service, a reporting login authorised with the controller's public key, non-interactive sudo for this playbook, and a working Python interpreter. Keep the private key on the controller and pin the target's SSH host key there. The playbook sets the shared SSH account, key, Python interpreter, and expected listener list. Adjust the defaults in the host registration task or pass overrides such as `-e report_ssh_user=ansible-report`. The example uses `/usr/bin/python3`. Set `report_python` when your RHEL installation provides Python 3 at a different path. Use `report_ssh_client_hostname` where the SSH policy depends on a hostname in a `Match Host` rule.
 
 Ansible first reads `SSH_CONNECTION` through the management login. It then uploads `full-v3/collect.py` to a temporary path, runs it with sudo, returns a JSON record, and normally removes the temporary script. SSH and sudo may write their usual logs. The playbook uses the target's existing services and tools and installs no persistent agent. Collection does not install updates, reboot hosts, restart services, or change their configuration.
 
@@ -27,7 +34,7 @@ Ansible first reads `SSH_CONNECTION` through the management login. It then uploa
 |---|---|
 | OS, kernel, boot and uptime | Reads `/etc/os-release` and `/proc`, and reads the running kernel release. |
 | Virtualisation and SELinux | Runs `systemd-detect-virt` and `getenforce`. |
-| Listening sockets and services | Runs `ss -lntup` and queries systemd for running services and failed units. The report compares local listeners with the inventory baseline. |
+| Listening sockets and services | Runs `ss -lntup` and queries systemd for running services and failed units. The report compares local listeners with the configured listener baseline. |
 | Host firewall | Reads firewalld state and zones, or reads the rules with `nft list ruleset`, `iptables-save`, and `ip6tables-save` where available. |
 | Effective SSH policy | Runs `sshd -T -C` against the standard on-disk configuration for root and the collection account, using the management connection's address and port context. |
 | Local privileged access | Reads local UID 0 accounts and `wheel` and `sudo` memberships. It reads standard sudoers files to compute fingerprints in the private snapshot. The published report lists file paths. |
@@ -56,7 +63,7 @@ The deployed controller defaults to **five forks**. The collection task has `thr
 | 10 seconds | 2 hours 30 minutes | 1 hour 15 minutes |
 | 20 seconds | 5 hours | 2 hours 30 minutes |
 
-The estimates divide host count × average worker time by concurrency and exclude final rendering. Allow **2–3 hours at ten workers** as an initial planning window, subject to a representative pilot of **100–200 hosts** across repositories, network segments, and cache states. Use the measured throughput and slow-host behaviour to set the job timeout. For a pilot, use a separate inventory and output directories so its partial result cannot replace the full fleet report. The older report's 30-minute systemd timeout is not suitable as a Full v3 fleet default.
+The estimates divide host count × average worker time by concurrency and exclude final rendering. Allow **2–3 hours at ten workers** as an initial planning window, subject to a representative pilot of **100–200 hosts** across repositories, network segments, and cache states. Use the measured throughput and slow-host behaviour to set the job timeout. For a pilot, use a separate host list and output directories so its partial result cannot replace the full fleet report. The older report's 30-minute systemd timeout is not suitable as a Full v3 fleet default.
 
 ## Daily run at 12:00 Dublin time
 
@@ -72,7 +79,7 @@ After=network-online.target
 Type=oneshot
 User=ansible-report
 WorkingDirectory=/opt/security-report
-ExecStart=/usr/bin/ansible-playbook -i inventory.yml collect-full-v3.yml -f 10
+ExecStart=/usr/bin/ansible-playbook -i localhost, collect-full-v3.yml -f 10
 TimeoutStartSec=4h
 ```
 

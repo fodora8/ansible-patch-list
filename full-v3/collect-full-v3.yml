@@ -1,4 +1,48 @@
 ---
+- name: Load the host dump on the controller
+  any_errors_fatal: true
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    report_hosts_path: "{{ report_hosts_file | default(playbook_dir ~ '/hosts.txt') }}"
+  tasks:
+    - name: Build the report inventory from the host dump
+      when: "'report_targets' not in groups or report_hosts_file is defined"
+      block:
+        - name: Read the host dump once
+          ansible.builtin.set_fact:
+            report_host_names: >-
+              {{ lookup('ansible.builtin.file', report_hosts_path, rstrip=false).splitlines()
+                 | map('trim') | reject('equalto', '') | unique | list }}
+
+        - name: Validate the host dump
+          ansible.builtin.assert:
+            that:
+              - report_host_names | length > 0
+              - "'report_targets' not in groups"
+              - >-
+                report_host_names | reject('match', '^[A-Za-z0-9][A-Za-z0-9.-]*$')
+                | list | length == 0
+              - >-
+                report_host_names | map('lower')
+                | intersect(['localhost', 'localhost.localdomain', '127.0.0.1',
+                             'all', 'ungrouped', 'report_targets']) | length == 0
+            fail_msg: "Use a nonempty file with one remote hostname or IPv4 address per line and run without a configured report_targets inventory."
+
+        - name: Register hosts with shared SSH and collection settings
+          ansible.builtin.add_host:
+            name: "{{ item }}"
+            groups: report_targets
+            ansible_connection: ssh
+            ansible_user: "{{ report_ssh_user | default('ansible-report') }}"
+            ansible_ssh_private_key_file: >-
+              {{ report_ssh_key | default('/home/ansible-report/.ssh/security-report-ed25519') }}
+            ansible_ssh_common_args: "-o BatchMode=yes -o StrictHostKeyChecking=yes"
+            report_python: "{{ report_target_python | default('/usr/bin/python3') }}"
+            report_allowed_listeners: "{{ report_listener_baseline | default(['tcp:22']) }}"
+          loop: "{{ report_host_names }}"
+
 - name: Collect host security status and vendor advisories
   hosts: report_targets
   gather_facts: false
@@ -28,17 +72,26 @@
 
 - name: Render reports on the controller
   hosts: localhost
+  connection: local
   gather_facts: false
+  vars:
+    state_dir: "{{ report_state_dir | default('/var/lib/security-report') }}"
+    web_dir: "{{ report_web_dir | default('/usr/share/nginx/html/security-report') }}"
   tasks:
+    - name: Require a populated report inventory
+      ansible.builtin.assert:
+        that:
+          - groups.get('report_targets', []) | length > 0
+          - report_hosts_file is not defined or report_host_names is defined
     - name: Write the collection results
       ansible.builtin.template:
         src: snapshots.json.j2
-        dest: "{{ report_state_dir }}/snapshots-full-v3.json"
+        dest: "{{ state_dir }}/snapshots-full-v3.json"
         mode: "0600"
 
     - name: Create the Full v3 report directory
       ansible.builtin.file:
-        path: "{{ report_web_dir }}/full-v3"
+        path: "{{ web_dir }}/full-v3"
         state: directory
         mode: "0755"
 
@@ -46,9 +99,9 @@
       ansible.builtin.command:
         argv:
           - /usr/bin/flock
-          - "{{ report_state_dir }}/full-v3-render.lock"
+          - "{{ state_dir }}/full-v3-render.lock"
           - /usr/bin/python3
           - "{{ playbook_dir }}/full-v3/render.py"
-          - "{{ report_state_dir }}/snapshots-full-v3.json"
-          - "{{ report_web_dir }}/full-v3"
+          - "{{ state_dir }}/snapshots-full-v3.json"
+          - "{{ web_dir }}/full-v3"
       changed_when: true
