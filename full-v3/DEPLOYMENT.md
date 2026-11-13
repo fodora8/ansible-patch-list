@@ -58,6 +58,54 @@ The deployed controller defaults to **five forks**. The collection task has `thr
 
 The estimates divide host count × average worker time by concurrency and exclude final rendering. Allow **2–3 hours at ten workers** as an initial planning window, subject to a representative pilot of **100–200 hosts** across repositories, network segments, and cache states. Use the measured throughput and slow-host behaviour to set the job timeout. For a pilot, use a separate inventory and output directories so its partial result cannot replace the full fleet report. The older report's 30-minute systemd timeout is not suitable as a Full v3 fleet default.
 
+## Daily run at 12:00 Dublin time
+
+On the Ansible controller, create `/etc/systemd/system/fleet-security-full-v3.service`. Set `User` to the controller account that owns the SSH key and known-hosts file and can write the report directories. The example uses ten Ansible forks and a four-hour timeout. Adjust both based on the fleet pilot.
+
+```ini
+[Unit]
+Description=Generate the Full v3 fleet security report
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ansible-report
+WorkingDirectory=/opt/security-report
+ExecStart=/usr/bin/ansible-playbook -i inventory.yml collect-full-v3.yml -f 10
+TimeoutStartSec=4h
+```
+
+Create `/etc/systemd/system/fleet-security-full-v3.timer`. The explicit timezone keeps the run at noon through daylight saving changes. `Persistent=true` runs a missed collection when the timer next starts.
+
+```ini
+[Unit]
+Description=Run Full v3 daily at noon Dublin time
+
+[Timer]
+OnCalendar=*-*-* 12:00:00 Europe/Dublin
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Validate the files, load them, and check the next scheduled run.
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/fleet-security-full-v3.{service,timer}
+sudo systemctl daemon-reload
+sudo systemctl enable --now fleet-security-full-v3.timer
+systemctl list-timers --all fleet-security-full-v3.timer
+```
+
+To run it immediately or review the last run:
+
+```bash
+sudo systemctl start fleet-security-full-v3.service
+sudo journalctl -u fleet-security-full-v3.service -n 80 --no-pager
+```
+
 ## Prometheus and Grafana
 
 Full v3 generates a static Prometheus text file alongside the CSV. The web server serves it at `/full-v3/metrics` under the same access rules as the report. Scrapes only read the last published file and do not start Ansible or contact the monitored hosts.
