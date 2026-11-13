@@ -4,10 +4,10 @@ Full v3 runs from the Ansible controller and publishes a paginated HTML report, 
 
 ## Controller deployment
 
-1. Use a Linux controller with Ansible Core, OpenSSH client, Python 3.9 or later, and `flock` from util-linux. Use Nginx to serve the generated files.
+1. Use a Linux controller with Ansible Core, OpenSSH client, Python 3.9 or later, and `flock` from util-linux. Use Lighttpd or Nginx to serve the generated files.
 2. Put `collect-full-v3.yml`, `snapshots.json.j2`, and an `inventory.yml` based on [the RHEL example](inventory-rhel.example.yml) in `/opt/security-report`. Put `collect.py`, `render.py`, and `report.html` in its `full-v3/` subdirectory.
 3. In inventory, set `report_state_dir` to a private directory writable by the reporting user and `report_web_dir` to the report server's document root. The example uses `/var/lib/security-report` and `/usr/share/nginx/html/security-report`. The playbook creates `full-v3/` under the web root. Keep the private state directory outside that root.
-4. Install `full-v3/nginx-locations.conf` and include it inside the existing Nginx report server block. This gives the HTML, CSV, host detail pages, and CVE files the server's existing access rules. Validate the configuration with `nginx -t` before reloading Nginx.
+4. Serve the report directory under `/full-v3/` using the existing report server's access rules. On Lighttpd, set `report_web_dir` to the virtual host's document root, ensure `index.html` is an index file, and include [the metrics configuration](lighttpd-metrics.conf) in that virtual host. Validate with `lighttpd -tt -f /etc/lighttpd/lighttpd.conf` before reloading. On Nginx, include `full-v3/nginx-locations.conf` in the existing report server block and validate with `nginx -t` before reloading.
 5. Add targets to `report_targets` and run the playbook as the reporting account.
 
 ```bash
@@ -60,9 +60,15 @@ The estimates divide host count × average worker time by concurrency and exclud
 
 ## Prometheus and Grafana
 
-Full v3 generates a static Prometheus text file alongside the CSV. Nginx serves it at `/full-v3/metrics` under the same access rules as the report. Scrapes only read the last published file and do not start Ansible or contact the monitored hosts.
+Full v3 generates a static Prometheus text file alongside the CSV. The web server serves it at `/full-v3/metrics` under the same access rules as the report. Scrapes only read the last published file and do not start Ansible or contact the monitored hosts.
 
-Merge the job from [the scrape example](prometheus-scrape.example.yml) into the existing Prometheus `scrape_configs` list, and set the target to the report server. The example uses a placeholder hostname and a 15-minute interval. Use the existing Grafana Prometheus data source to query the metrics.
+Merge the job from [the scrape example](prometheus-scrape.example.yml) into the existing Prometheus `scrape_configs` list, and set the target to the report server. The example uses a placeholder hostname and a 15-minute interval. Use the existing Grafana Prometheus data source to query the metrics. From the Prometheus server, check that the endpoint returns HTTP 200 and `Content-Type: text/plain; version=0.0.4`, optionally with a charset parameter.
+
+```sh
+curl -fsSI http://reports.example.com/full-v3/metrics
+```
+
+[Lighttpd MIME configuration](https://redmine.lighttpd.net/projects/lighttpd/wiki/Mimetype_assignDetails) · [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/)
 
 | Grafana panel | PromQL |
 |---|---|

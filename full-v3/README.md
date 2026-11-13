@@ -8,8 +8,7 @@ ansible-playbook -i inventory.yml collect-full-v3.yml
 ```
 
 Copy the contents of this directory, including its nested `full-v3/` directory, to
-`/opt/security-report`. Include `full-v3/nginx-locations.conf` inside the existing report
-server block so the routes inherit the same access rules. The playbook writes
+`/opt/security-report`. See the [deployment guide](DEPLOYMENT.md) for Lighttpd and Nginx setup. The playbook writes
 `snapshots-full-v3.json` under the report state directory and serves output under
 `/full-v3/`. The collector uses the target’s enabled RHEL repositories and checks SSH
 policy and local privileged access. See the [deployment guide](DEPLOYMENT.md)
